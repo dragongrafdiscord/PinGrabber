@@ -25,5 +25,13 @@ PinGrabber is a Chrome extension that allows users to download images from Pinte
 5. Select the images you want to download and click the "Download" button.
 6. The extension will create a ZIP file of the downloaded images.
 
+## Contribution
+
+We welcome contributions! Please feel free to submit a pull request or open an issue if you have any suggestions or improvements.
+
+## Contact
+
+For any inquiries, please contact me at mukhbit000@gmail.com.
+
 ## License
 This project is licensed under the [MIT License](./LICENSE).
