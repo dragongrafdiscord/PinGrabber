@@ -50,7 +50,7 @@ class PinterestDownloader {
     const floatBtn = document.createElement('div');
     floatBtn.id = 'pinterest-downloader-float-btn';
     floatBtn.innerHTML = `
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
         <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
       </svg>
       <div class="control-panel">
@@ -158,7 +158,8 @@ class PinterestDownloader {
         const url = media.src || media.dataset.src || media.querySelector('source')?.src;
         if (url && !this.collectedUrls.has(url)) {
           this.collectedUrls.add(url);
-          this.updateUrlList(url);
+          const highResUrl = this.getHighQualityUrl(url);
+          this.updateUrlList(highResUrl);
         }
       }
     } catch (error) {
@@ -307,7 +308,7 @@ class PinterestDownloader {
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="url">${url}</span>
-      <span class="resolution">${this.getResolutionFromUrl(url)}</span>
+      <span class="resolution-badge">${this.getResolutionFromUrl(url)}</span>
     `;
     list.appendChild(li);
     list.scrollTop = list.scrollHeight;
@@ -369,6 +370,54 @@ class PinterestDownloader {
       this.cleanup();
     }
   }
+
+  // ==================== AUTO-SCROLL MECHANISM ====================
+toggleAutoScroll() {
+  this.isAutoScrolling = !this.isAutoScrolling;
+  const controlBtn = document.querySelector('.scroll-control');
+  
+  if (this.isAutoScrolling) {
+    controlBtn.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:8px;">
+        <path d="M6 18h12v-2H6v2zM18 6v2H6V6h12z"/>
+      </svg>
+      <span>⏹ Stop Scroll</span>
+    `;
+    this.startAutoScroll();
+  } else {
+    controlBtn.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:8px;">
+        <path d="M11 5v11.17l-4.88-4.88c-.39-.39-1.03-.39-1.42 0-.39.39-.39 1.02 0 1.41l6.59 6.59c.39.39 1.02.39 1.41 0l6.59-6.59c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0L13 16.17V5c0-.55-.45-1-1-1s-1 .45-1 1z"/>
+      </svg>
+      <span>⬇ Auto Scroll</span>
+    `;
+    this.stopAutoScroll();
+  }
+}
+
+startAutoScroll() {
+  this.scrollInterval = setInterval(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    this.updateScrollProgress();
+  }, 3000);
+}
+
+stopAutoScroll() {
+  clearInterval(this.scrollInterval);
+  this.scrollInterval = null;
+  this.isAutoScrolling = false;
+}
+
+updateScrollProgress() {
+  try {
+    const pins = this.findElements(dynamicSelectors.pin);
+    const progress = Math.min((pins.length / 500) * 100, 100);
+    const progressBar = document.querySelector('.pdl-progress');
+    if (progressBar) progressBar.value = progress;
+  } catch (error) {
+    console.error('Progress update error:', error);
+  }
+}
 
   // ==================== UTILITIES ====================
   findElements(selectors, node = document) {
