@@ -1,7 +1,7 @@
-# Pinterest Noir Downloader
+# PinGrabber
 
 ## Description
-Pinterest Noir Downloader is a Chrome extension that allows users to download images from Pinterest easily. The extension provides a simple interface to download images directly from Pinterest boards and pins.
+PinGrabber is a Chrome extension that allows users to download images from Pinterest easily. The extension provides a simple interface to download images directly from Pinterest boards and pins.
 
 ## Features
 - Download images from Pinterest boards and pins.
