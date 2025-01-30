@@ -19,7 +19,7 @@ PinGrabber is a Chrome extension that allows users to download images from Pinte
 
 ## Usage
 1. Navigate to Pinterest and browse to the board or pin you want to download images from.
-2. Click on the Pinterest Noir Downloader icon in the Chrome toolbar.
+2. Click on the PinGrabber icon in the Chrome toolbar.
 3. A popup will appear with options to download images.
 4. Use the floating button to auto-scroll and load more images.
 5. Select the images you want to download and click the "Download" button.
