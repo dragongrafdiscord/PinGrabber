@@ -1,46 +1,37 @@
+// popup.js
+
 document.addEventListener('DOMContentLoaded', () => {
-    const themeButton = document.getElementById('themeButton');
-    let isDark = localStorage.getItem('theme') === 'dark';
-  
-    async function sendThemeToContent() {
-      try {
-        const [tab] = await chrome.tabs.query({ 
-          active: true, 
-          currentWindow: true 
-        });
-        
-        if (!tab.url.includes('pinterest.com')) {
-          console.log('Not a Pinterest page');
-          return;
+  const themeButton = document.getElementById('themeButton');
+  let isDark = localStorage.getItem('theme') === 'dark';
+
+  function sendThemeToContent(theme) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0 || !tabs[0].url.includes('pinterest.com')) return;
+
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'setTheme',
+        theme: theme
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Content script not ready, retrying...");
+          setTimeout(() => sendThemeToContent(theme), 500);
         }
-  
-        await chrome.tabs.sendMessage(tab.id, {
-          action: 'updateTheme',
-          theme: isDark ? 'dark' : 'light'
-        });
-        
-      } catch (error) {
-        console.log('Content script not ready:', error);
-        setTimeout(sendThemeToContent, 500); // Retry after 500ms
-      }
-    }
-  
-    function updateTheme() {
-        const theme = isDark ? 'dark' : 'light';
-        document.body.setAttribute('data-theme', theme);
-        localStorage.setItem('theme', theme);
-      
-        // Send theme to content script
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          chrome.tabs.sendMessage(tabs[0].id, { action: 'setTheme', theme });
-        });
-      }
-      
-    themeButton.addEventListener('click', () => {
-      isDark = !isDark;
-      updateTheme();
+      });
     });
-  
-    // Initial setup
+  }
+
+  function updateTheme() {
+    const theme = isDark ? 'dark' : 'light';
+    document.body.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+    sendThemeToContent(theme);
+  }
+
+  themeButton.addEventListener('click', () => {
+    isDark = !isDark;
     updateTheme();
   });
+
+  // Initialize
+  updateTheme();
+});

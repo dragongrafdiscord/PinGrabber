@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "PinGrabber",
-  "version": "1.0",
-  "permissions": [
-    "activeTab",
-    "downloads",
-    "scripting",
-    "storage"
-  ],
+  "name": "Dragon-PinGrabber",
+  "version": "2.0",
+"permissions": [
+  "activeTab",
+  "downloads",
+  "scripting",
+  "storage",
+  "tabs"
+],
   "host_permissions": [
     "*://*.pinterest.com/*"
   ],

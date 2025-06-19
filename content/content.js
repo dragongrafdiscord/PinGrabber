@@ -1,4 +1,3 @@
-
 // content.js
 const dynamicSelectors = {
   pin: [
@@ -16,6 +15,35 @@ const dynamicSelectors = {
   ]
 };
 
+const capturedVideoUrls = new Set();
+
+// Hook into fetch() to extract .mp4 requests
+(function() {
+  const originalFetch = window.fetch;
+  window.fetch = async function(...args) {
+    const response = await originalFetch.apply(this, args);
+    try {
+      if (args[0] && typeof args[0] === 'string' && args[0].includes("v.pinimg.com")) {
+        capturedVideoUrls.add(args[0]);
+        console.log("[Intercepted MP4]", args[0]);
+      }
+    } catch (e) {}
+    return response;
+  };
+})();
+
+// Hook into XMLHttpRequest for the same
+(function() {
+  const originalOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    if (url && url.includes("v.pinimg.com")) {
+      capturedVideoUrls.add(url);
+      console.log("[XHR MP4]", url);
+    }
+    return originalOpen.apply(this, arguments);
+  };
+})();
+
 class PinterestDownloader {
   constructor() {
     this.isAutoScrolling = false;
@@ -27,7 +55,6 @@ class PinterestDownloader {
     this.fetchObserver = null;
     this.cancelRequested = false;
     this.abortController = null;
-
     chrome.runtime.onMessage.addListener((request) => {
       if (request.action === 'setTheme') {
         document.body.setAttribute('data-theme', request.theme);
@@ -36,6 +63,25 @@ class PinterestDownloader {
 
     this.initialize();
   }
+mergeCapturedVideos() {
+  // Inject test MP4 once before merge starts
+  capturedVideoUrls.add("https://v.pinimg.com/videos/mc/720p/1a/2f/f9/1a2ff9d5ec3e6d7abdb2d5b9e4f0a4c3.mp4");
+
+  console.log("📹 Captured video URLs before merge:", [...capturedVideoUrls]);
+
+  for (const url of capturedVideoUrls) {
+    if (!this.collectedUrls.has(url)) {
+      this.collectedUrls.add(url);
+      this.updateUrlList(url);
+      console.log("[Merged MP4]", url);
+    }
+  }
+}
+
+downloadWithChrome(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  chrome.runtime.sendMessage({ action: "download", url, filename });
+}
 
   initialize() {
     this.injectFloatingButton();
@@ -43,7 +89,6 @@ class PinterestDownloader {
     this.scanExistingContent();
   }
 
-  // ==================== UI COMPONENTS ====================
   injectFloatingButton() {
     if (document.getElementById('pinterest-downloader-float-btn')) return;
 
@@ -79,9 +124,21 @@ class PinterestDownloader {
     container.querySelector('.download-trigger').addEventListener('click', () => this.showDownloadModal());
   }
 
-  // ==================== DOM OBSERVERS ====================
   setupDOMObservers() {
-    // Main Mutation Observer
+    this.videoObserver = new MutationObserver(mutations => {
+      mutations.forEach(m => {
+        m.addedNodes.forEach(node => {
+          if (node.nodeType !== Node.ELEMENT_NODE) return;
+          const pin = node.closest(dynamicSelectors.pin.join(','));
+          if (pin) this.processPin(pin);
+        });
+      });
+    });
+
+    this.videoObserver.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
     this.observer = new MutationObserver(mutations => {
       mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => this.processNewNode(node));
@@ -95,7 +152,6 @@ class PinterestDownloader {
       attributeFilter: ['src', 'data-src', 'data-test-id']
     });
 
-    // Lazy-load Observer
     this.lazyLoadObserver = new IntersectionObserver(entries => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
@@ -108,7 +164,6 @@ class PinterestDownloader {
       });
     }, { rootMargin: '500px 0px' });
 
-    // Initial content scan
     this.scanExistingContent();
   }
 
@@ -119,10 +174,8 @@ class PinterestDownloader {
   processNewNode(node) {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
 
-    // Process pin containers
     this.findElements(dynamicSelectors.pin, node).forEach(pin => this.processPin(pin));
 
-    // Process individual media elements
     const mediaElements = node.querySelectorAll('img, video');
     mediaElements.forEach(media => {
       const pin = media.closest(dynamicSelectors.pin.join(','));
@@ -130,102 +183,70 @@ class PinterestDownloader {
     });
   }
 
-  updateDownloadProgress(progressBar, current, total) {
-    if (progressBar && typeof progressBar.update === 'function') {
-      progressBar.update(current, total);
-    }
-  }
-
   processPin(pin) {
     if (!pin || this.collectedPins.has(pin)) return;
-    
+
     this.collectedPins.add(pin);
     this.lazyLoadObserver.observe(pin);
-    this.processPinMedia(pin); 
-  }
 
-  processPinMedia(pin) {
-    try {
-      if (!pin) return;
+    const mediaElements = pin.querySelectorAll(`
+      img[src*="pinimg.com"],
+      img[data-src*="pinimg.com"],
+      video source[src*="v.pinimg.com"],
+      video[src*="v.pinimg.com"],
+      div[data-test-id="gifContainer"] video,
+      source[src^="https://v.pinimg.com/"]
+    `);
 
-      const media = pin.querySelector(`
-        img[src*="pinimg.com"], 
-        img[data-src*="pinimg.com"], 
-        video source[src*="pinimg.com"]
-      `);
-      
-      if (media) {
-        const url = media.src || media.dataset.src || media.querySelector('source')?.src;
-        if (url && !this.collectedUrls.has(url)) {
-          this.collectedUrls.add(url);
-          const highResUrl = this.getHighQualityUrl(url);
-          this.updateUrlList(highResUrl);
-        }
+    mediaElements.forEach(el => {
+      const rawUrl = el.getAttribute('src') || el.src;
+      if (!rawUrl || rawUrl.startsWith('blob:') || this.collectedUrls.has(rawUrl)) return;
+
+      const isVideo = rawUrl.includes("v.pinimg.com");
+      const url = isVideo ? rawUrl : this.getHighQualityUrl(rawUrl);
+
+      if (this.isValidPinUrl(url)) {
+        this.collectedUrls.add(url);
+        this.updateUrlList(url);
+        console.log(`[+] Collected ${isVideo ? "VIDEO" : "IMG"}: ${url}`);
       }
-    } catch (error) {
-      console.error('Pin media processing error:', error);
-    }
-  }
-
-
-  // ==================== MEDIA HANDLING ====================
-  async getPinMedia(pin) {
-    try {
-      const media = pin.querySelector('img[src*="pinimg.com"], img[data-src*="pinimg.com"], video source[src*="pinimg.com"]');
-      if (!media) return null;
-
-      const rawUrl = media.src || media.dataset.src || media.querySelector('source')?.src;
-      const highResUrl = this.getHighQualityUrl(rawUrl);
-
-      if (!this.isValidPinUrl(highResUrl)) return null;
-
-      const response = await fetch(highResUrl, {
-        signal: this.abortController.signal,
-        referrerPolicy: 'no-referrer'
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      return {
-        blob: await response.blob(),
-        ext: this.getFileExtension(highResUrl)
-      };
-    } catch (error) {
-      console.error('Media download failed:', error);
-      return null;
-    }
+    });
   }
 
   getHighQualityUrl(url) {
     try {
+      if (url.includes("v.pinimg.com")) return url;
       const urlObj = new URL(url);
-      const pathParts = urlObj.pathname.split('/');
-      const resolutionIndex = pathParts.findIndex(part => /\d+x/.test(part));
-      
-      if (resolutionIndex !== -1) {
-        pathParts[resolutionIndex] = 'originals';
-        urlObj.pathname = pathParts.join('/');
-      }
+      urlObj.pathname = urlObj.pathname.replace(/\/\d+x\//, "/originals/");
       return urlObj.toString();
-    } catch (error) {
-      console.error('URL upgrade failed:', error);
+    } catch {
       return url;
     }
   }
-
   isValidPinUrl(url) {
-    return url && typeof url === 'string' && url.includes('pinimg.com/originals/');
+    return url && typeof url === 'string' && (
+      url.includes('pinimg.com/originals/') || 
+      url.includes('v.pinimg.com') || 
+      url.startsWith('https://v.pinimg.com/')
+    ) && !url.includes('thumbnails');
   }
 
-  getFileExtension(url) {
-    return (url.split('.').pop() || 'jpg').split(/[#?]/)[0];
+  getFileExtension(url, contentType = '') {
+    if (url.includes("v.pinimg.com")) return 'mp4';
+    if (contentType.includes("video/mp4")) return 'mp4';
+    if (contentType.includes("image/gif")) return 'gif';
+    if (contentType.includes("image/png")) return 'png';
+    if (contentType.includes("image/jpeg")) return 'jpg';
+
+    const ext = (url.split('.').pop() || 'jpg').split(/[#?]/)[0];
+    if (['jpg', 'png', 'gif', 'mp4', 'webm'].includes(ext)) return ext;
+
+    return 'bin';
   }
 
-  // ==================== DOWNLOAD MODAL ====================
   showDownloadModal() {
     this.removeExisting('.download-modal');
     this.collectedUrls.clear();
-
     const modal = document.createElement('div');
     modal.className = 'download-modal';
     modal.innerHTML = `
@@ -256,7 +277,6 @@ class PinterestDownloader {
         </button>
       </div>
     `;
-
     const fetchTrigger = modal.querySelector('.fetch-trigger');
     const confirmBtn = modal.querySelector('.confirm-download');
 
@@ -266,11 +286,13 @@ class PinterestDownloader {
     });
 
     confirmBtn.addEventListener('click', () => {
-      if (this.collectedUrls.size > 0) {
-        this.startDownloadProcess();
-        modal.remove();
-      }
-    });
+  this.mergeCapturedVideos();
+  setTimeout(() => {
+    this.startDownloadProcess();
+    modal.remove();
+  }, 1500); // ⏱ wait 1.5 seconds to ensure fetch hooks catch MP4s
+});
+
 
     modal.querySelector('.modal-close').addEventListener('click', () => {
       this.fetchObserver?.disconnect();
@@ -330,12 +352,10 @@ class PinterestDownloader {
     const confirmBtn = document.querySelector('.confirm-download');
     if (confirmBtn) confirmBtn.disabled = this.collectedUrls.size === 0;
   }
-
-  // ==================== DOWNLOAD PROCESS ====================
   async startDownloadProcess() {
     try {
       if (!window.JSZip) throw new Error("JSZip library not found");
-      
+
       this.abortController = new AbortController();
       const zip = new JSZip();
       const folder = zip.folder(this.getBoardName());
@@ -344,24 +364,63 @@ class PinterestDownloader {
 
       for (const [index, url] of urls.entries()) {
         if (this.cancelRequested) break;
-        
-        try {
-          const pin = this.findPinByUrl(url);
-          if (!pin) continue;
+if (url.includes("v.pinimg.com")) {
+  // fallback to tab download for MP4s
+  chrome.runtime.sendMessage({
+    action: 'openTabDownload',
+    url: url
+  });
+  continue; // Skip fetch() for these
+}
 
-          const media = await this.getPinMedia(pin);
-          if (media) {
-            folder.file(`pin_${index + 1}.${media.ext}`, media.blob);
-            this.updateDownloadProgress(progressBar, index + 1, urls.length);
+        try {
+          const response = await fetch(url, {
+  signal: this.abortController.signal,
+  headers: {
+    'Referer': 'https://www.pinterest.com/',
+    'User-Agent': navigator.userAgent
+  }
+});
+
+
+          const contentType = response.headers.get("content-type") || '';
+
+          if (!response.ok) {
+            console.warn(`Failed to fetch: ${url}`);
+            continue;
           }
-        } catch (error) {
-          console.error(`Error processing pin ${index}:`, error);
+
+          console.log(`[TYPE] ${url} → ${contentType}`);
+          if (!contentType.includes('image') && !contentType.includes('video')) {
+            console.warn(`[⚠] Unknown content-type (${contentType}) for URL: ${url}`);
+          }
+
+          const ext = this.getFileExtension(url, contentType);
+          const text = await response.clone().text();
+console.log(`[MP4-RESPONSE TEST] ${url}`, text.slice(0, 300));
+
+          const blob = await response.blob();
+
+            console.log(`[FETCH] ${url}`);
+
+          if (blob.size < 1000) {
+            console.warn(`[SKIP] Small blob for ${url} with content-type ${contentType} and size ${blob.size}`);
+            console.warn(`Skipped small file (likely placeholder): ${url}`);
+            continue;
+          }
+
+          const safeName = `media_${index + 1}_${Date.now().toString(36)}.${ext}`;
+          folder.file(safeName, blob);
+
+          progressBar.update(index + 1, urls.length);
+        } catch (err) {
+          console.warn(`Error fetching URL [${url}]:`, err);
         }
       }
 
       if (!this.cancelRequested) {
         const content = await zip.generateAsync({ type: 'blob' });
-        this.triggerDownload(content, `${this.getBoardName()}.zip`);
+        this.downloadWithChrome(content, `${this.getBoardName()}.zip`);
         this.showDownloadComplete(urls.length);
       }
     } catch (error) {
@@ -370,62 +429,59 @@ class PinterestDownloader {
       this.cleanup();
     }
   }
+  toggleAutoScroll() {
+    this.isAutoScrolling = !this.isAutoScrolling;
+    const controlBtn = document.querySelector('.scroll-control');
 
-  // ==================== AUTO-SCROLL MECHANISM ====================
-toggleAutoScroll() {
-  this.isAutoScrolling = !this.isAutoScrolling;
-  const controlBtn = document.querySelector('.scroll-control');
-  
-  if (this.isAutoScrolling) {
-    controlBtn.innerHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:8px;">
-        <path d="M6 18h12v-2H6v2zM18 6v2H6V6h12z"/>
-      </svg>
-      <span>⏹ Stop Scroll</span>
-    `;
-    this.startAutoScroll();
-  } else {
-    controlBtn.innerHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:8px;">
-        <path d="M11 5v11.17l-4.88-4.88c-.39-.39-1.03-.39-1.42 0-.39.39-.39 1.02 0 1.41l6.59 6.59c.39.39 1.02.39 1.41 0l6.59-6.59c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0L13 16.17V5c0-.55-.45-1-1-1s-1 .45-1 1z"/>
-      </svg>
-      <span>⬇ Auto Scroll</span>
-    `;
-    this.stopAutoScroll();
+    if (this.isAutoScrolling) {
+      controlBtn.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:8px;">
+          <path d="M6 18h12v-2H6v2zM18 6v2H6V6h12z"/>
+        </svg>
+        <span>⏹ Stop Scroll</span>
+      `;
+      this.startAutoScroll();
+    } else {
+      controlBtn.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="margin-right:8px;">
+          <path d="M11 5v11.17l-4.88-4.88c-.39-.39-1.03-.39-1.42 0-.39.39-.39 1.02 0 1.41l6.59 6.59c.39.39 1.02.39 1.41 0l6.59-6.59c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0L13 16.17V5c0-.55-.45-1-1-1s-1 .45-1 1z"/>
+        </svg>
+        <span>⬇ Auto Scroll</span>
+      `;
+      this.stopAutoScroll();
+      setTimeout(() => this.scanExistingContent(), 1000);
+    }
   }
-}
 
-startAutoScroll() {
-  this.scrollInterval = setInterval(() => {
-    window.scrollTo(0, document.documentElement.scrollHeight);
-    this.updateScrollProgress();
-  }, 3000);
-}
-
-stopAutoScroll() {
-  clearInterval(this.scrollInterval);
-  this.scrollInterval = null;
-  this.isAutoScrolling = false;
-}
-
-updateScrollProgress() {
-  try {
-    const pins = this.findElements(dynamicSelectors.pin);
-    const progress = Math.min((pins.length / 500) * 100, 100);
-    const progressBar = document.querySelector('.pdl-progress');
-    if (progressBar) progressBar.value = progress;
-  } catch (error) {
-    console.error('Progress update error:', error);
+  startAutoScroll() {
+    this.scrollInterval = setInterval(() => {
+      window.scrollBy(0, 2000); // Larger jump
+      this.updateScrollProgress();
+    }, 2500); // Slightly slower for Pinterest to load content
   }
-}
 
-  // ==================== UTILITIES ====================
+  stopAutoScroll() {
+    clearInterval(this.scrollInterval);
+    this.scrollInterval = null;
+    this.isAutoScrolling = false;
+  }
+
+  updateScrollProgress() {
+    try {
+      const pins = this.findElements(dynamicSelectors.pin);
+      const progress = Math.min((pins.length / 500) * 100, 100);
+      const progressBar = document.querySelector('.pdl-progress');
+      if (progressBar) progressBar.value = progress;
+    } catch (error) {
+      console.error('Progress update error:', error);
+    }
+  }
+
   findElements(selectors, node = document) {
-    return selectors.flatMap(selector => 
+    return selectors.flatMap(selector =>
       Array.from(node.querySelectorAll(selector))
     ).filter((v, i, a) => a.indexOf(v) === i);
   }
-
   findPinByUrl(url) {
     return Array.from(this.collectedPins).find(pin => {
       const media = pin.querySelector('img, video');
@@ -477,7 +533,6 @@ updateScrollProgress() {
       }
     };
   }
-
   triggerDownload(content, filename) {
     const url = URL.createObjectURL(content);
     const a = document.createElement('a');
@@ -534,6 +589,5 @@ updateScrollProgress() {
     document.querySelectorAll(selector).forEach(el => el.remove());
   }
 }
-
 // Initialize the extension
 new PinterestDownloader();
