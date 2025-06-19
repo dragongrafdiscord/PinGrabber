@@ -25,6 +25,9 @@ PinGrabber is a Chrome extension that allows users to download images from Pinte
 5. Select the images you want to download and click the "Download" button.
 6. The extension will create a ZIP file of the downloaded images.
 
+If you want to use your own Icon use a website like https://imresizer.com/resize-image-to-16x16 make sure its set to PNG then edit the px to 48x48 then 128x128 and call them 
+"icon16" "icon48" and "icon128" and put them into the icons folder replace the old files and reload your extention done
+
 ## Contribution
 
 We welcome contributions! Please feel free to submit a pull request or open an issue if you have any suggestions or improvements.
