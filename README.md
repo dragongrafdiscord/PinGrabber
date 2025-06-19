@@ -1,4 +1,5 @@
-# PinGrabber
+# PinGrabber This Fork is not Working yet use original
+technically it is working just no video support yet
 
 ## Description
 PinGrabber is a Chrome extension that allows users to download images from Pinterest easily. The extension provides a simple interface to download images directly from Pinterest boards and pins.
